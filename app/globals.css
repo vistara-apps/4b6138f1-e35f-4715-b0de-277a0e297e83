@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  /* Coinbase Theme - Dark Navy */
+  --color-bg: #0a1929;
+  --color-fg: #e3f2fd;
+  --color-surface: #1a2332;
+  --color-primary: #0052ff;
+  --color-accent: #1976d2;
+  --color-success: #00c853;
+  --color-error: #ff1744;
+  --color-warning: #ffc107;
+  --color-text-primary: #e3f2fd;
+  --color-text-secondary: #90caf9;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  font-family: 'Inter', sans-serif;
+  background-color: var(--color-bg);
+  color: var(--color-fg);
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
