@@ -2,10 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { sdk } from '@farcaster/miniapp-sdk';
-import { ConnectWallet, Transaction, TransactionButton } from '@coinbase/onchainkit/wallet';
-import { ArrowLeft, Send, MessageCircle } from 'lucide-react';
+import { ConnectWallet } from '@coinbase/onchainkit/wallet';
+import { ArrowLeft, Send, MessageCircle, Check, AlertCircle, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
+import { useWalletClient, useAccount, usePublicClient } from 'wagmi';
+import { withPaymentInterceptor } from 'x402-axios';
+import axios from 'axios';
+import { parseUnits } from 'viem';
 
 const TIP_AMOUNTS = [
   { value: 0.1, label: '$0.10' },
@@ -14,6 +18,18 @@ const TIP_AMOUNTS = [
   { value: 10, label: '$10' },
 ];
 
+// USDC on Base contract address
+const USDC_BASE_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+
+// API endpoint - replace with your actual endpoint
+const TIP_API_ENDPOINT = process.env.NEXT_PUBLIC_TIP_API_ENDPOINT || 'https://api.streamertip.app/tip';
+
+interface TipStatus {
+  state: 'idle' | 'preparing' | 'signing' | 'confirming' | 'success' | 'error';
+  message: string;
+  txHash?: string;
+}
+
 export default function TipPage() {
   const params = useParams();
   const username = params.username as string;
@@ -21,6 +37,11 @@ export default function TipPage() {
   const [customAmount, setCustomAmount] = useState('');
   const [message, setMessage] = useState('');
   const [context, setContext] = useState<any>(null);
+  const [tipStatus, setTipStatus] = useState<TipStatus>({ state: 'idle', message: '' });
+
+  const { data: walletClient } = useWalletClient();
+  const { address, isConnected } = useAccount();
+  const publicClient = usePublicClient();
 
   useEffect(() => {
     sdk.actions.ready();
@@ -29,8 +50,105 @@ export default function TipPage() {
   }, []);
 
   const handleTip = async () => {
-    // Transaction logic will be implemented here
-    console.log('Tipping:', { amount: selectedAmount, message });
+    if (!walletClient || !address || !isConnected || !publicClient) {
+      setTipStatus({
+        state: 'error',
+        message: 'Please connect your wallet first',
+      });
+      return;
+    }
+
+    if (selectedAmount <= 0) {
+      setTipStatus({
+        state: 'error',
+        message: 'Please select a valid tip amount',
+      });
+      return;
+    }
+
+    try {
+      setTipStatus({
+        state: 'preparing',
+        message: 'Preparing your tip...',
+      });
+
+      // Create x402 axios instance with wallet client
+      // Note: Type assertion is safe as wagmi's WalletClient is compatible with x402's requirements
+      const x402Client = withPaymentInterceptor(
+        axios.create({
+          baseURL: TIP_API_ENDPOINT.replace('/tip', ''),
+        }),
+        walletClient as any
+      );
+
+      // Convert amount to USDC units (6 decimals for USDC)
+      const amountInUSDC = parseUnits(selectedAmount.toString(), 6);
+
+      setTipStatus({
+        state: 'signing',
+        message: 'Requesting payment signature...',
+      });
+
+      // Make payment request to backend with x402
+      const response = await x402Client.post('/tip', {
+        username,
+        amount: amountInUSDC.toString(),
+        message: message || undefined,
+        from: address,
+      });
+
+      setTipStatus({
+        state: 'confirming',
+        message: 'Confirming transaction...',
+      });
+
+      // Extract transaction hash from response if available
+      const txHash = response.data?.txHash || response.headers['x-transaction-hash'];
+
+      // Wait a bit for confirmation (in production, you'd want to poll or use websockets)
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      setTipStatus({
+        state: 'success',
+        message: `Successfully sent $${selectedAmount.toFixed(2)} to @${username}!`,
+        txHash,
+      });
+
+      // Reset form after successful tip
+      setTimeout(() => {
+        setSelectedAmount(1);
+        setCustomAmount('');
+        setMessage('');
+        setTipStatus({ state: 'idle', message: '' });
+      }, 5000);
+
+    } catch (error: any) {
+      console.error('Tip error:', error);
+      
+      let errorMessage = 'Failed to process tip. Please try again.';
+      
+      if (error.response?.status === 402) {
+        errorMessage = 'Payment required. Please ensure you have sufficient USDC balance.';
+      } else if (error.response?.status === 400) {
+        errorMessage = error.response.data?.error || 'Invalid request. Please check your input.';
+      } else if (error.code === 'ACTION_REJECTED') {
+        errorMessage = 'Transaction was rejected. Please try again.';
+      } else if (error.message?.includes('insufficient funds')) {
+        errorMessage = 'Insufficient USDC balance for this tip.';
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
+      setTipStatus({
+        state: 'error',
+        message: errorMessage,
+      });
+
+      // Clear error after 8 seconds
+      setTimeout(() => {
+        setTipStatus({ state: 'idle', message: '' });
+      }, 8000);
+    }
   };
 
   return (
@@ -111,20 +229,75 @@ export default function TipPage() {
           </div>
         </div>
 
+        {/* Transaction Status */}
+        {tipStatus.state !== 'idle' && (
+          <div
+            className={`mb-6 p-4 rounded-lg border flex items-start gap-3 ${
+              tipStatus.state === 'success'
+                ? 'bg-success/10 border-success/30 text-success'
+                : tipStatus.state === 'error'
+                ? 'bg-error/10 border-error/30 text-error'
+                : 'bg-primary/10 border-primary/30 text-primary'
+            }`}
+          >
+            {tipStatus.state === 'success' && <Check className="w-5 h-5 flex-shrink-0 mt-0.5" />}
+            {tipStatus.state === 'error' && <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />}
+            {['preparing', 'signing', 'confirming'].includes(tipStatus.state) && (
+              <Loader2 className="w-5 h-5 flex-shrink-0 mt-0.5 animate-spin" />
+            )}
+            <div className="flex-1">
+              <p className="font-semibold">{tipStatus.message}</p>
+              {tipStatus.txHash && (
+                <a
+                  href={`https://basescan.org/tx/${tipStatus.txHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm underline mt-1 inline-block hover:opacity-80"
+                >
+                  View transaction
+                </a>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Send Tip Button */}
         <button
           onClick={handleTip}
-          disabled={selectedAmount <= 0}
+          disabled={
+            selectedAmount <= 0 ||
+            !isConnected ||
+            ['preparing', 'signing', 'confirming'].includes(tipStatus.state)
+          }
           className="w-full bg-primary hover:bg-accent text-white font-semibold py-4 rounded-lg shadow-button transition-all duration-200 hover:scale-105 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
         >
-          <Send className="w-5 h-5" />
-          Send ${selectedAmount.toFixed(2)} Tip
+          {['preparing', 'signing', 'confirming'].includes(tipStatus.state) ? (
+            <>
+              <Loader2 className="w-5 h-5 animate-spin" />
+              {tipStatus.state === 'preparing' && 'Preparing...'}
+              {tipStatus.state === 'signing' && 'Signing...'}
+              {tipStatus.state === 'confirming' && 'Confirming...'}
+            </>
+          ) : (
+            <>
+              <Send className="w-5 h-5" />
+              {isConnected 
+                ? `Send $${selectedAmount.toFixed(2)} Tip` 
+                : 'Connect Wallet to Tip'
+              }
+            </>
+          )}
         </button>
 
         {/* Info */}
         <div className="mt-6 text-center text-sm text-text-secondary">
-          <p>✨ Gas-free transaction powered by Base</p>
-          <p className="mt-1">🔒 Secure and instant</p>
+          <p>✨ x402 powered payments with USDC on Base</p>
+          <p className="mt-1">🔒 Secure and instant transactions</p>
+          {isConnected && address && (
+            <p className="mt-2 text-xs">
+              Connected: {address.slice(0, 6)}...{address.slice(-4)}
+            </p>
+          )}
         </div>
       </div>
     </main>
