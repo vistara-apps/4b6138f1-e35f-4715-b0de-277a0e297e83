@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { sdk } from '@farcaster/miniapp-sdk';
-import { ConnectWallet, Avatar, Name } from '@coinbase/onchainkit/wallet';
+import { ConnectWallet } from '@coinbase/onchainkit/wallet';
 import { ArrowLeft, Share2, TrendingUp, DollarSign } from 'lucide-react';
 import Link from 'next/link';
 
